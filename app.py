@@ -1291,10 +1291,10 @@ def show_sidebar():
             show_admin_sidebar()
 
 def show_client_sidebar():
-    """Show client mode sidebar"""
+    """Show client mode sidebar with editing capabilities"""
     st.markdown("### 🏢 Company Information")
     
-    # Company info summary
+    # Company info summary with edit option
     company_info = st.session_state.company_info
     if company_info:
         st.markdown(f"""
@@ -1302,16 +1302,22 @@ def show_client_sidebar():
         **Department:** {company_info.get('department', 'Not selected')}  
         **Contact:** {company_info.get('contact_person', 'Not provided')}
         """)
+        
+        if st.button("✏️ Edit Company Info", key="edit_company_sidebar", use_container_width=True):
+            navigate_to_step('company_info')
     else:
         st.info("Please complete company information")
     
-    # Selected department info
+    # Selected department info with edit option
     if st.session_state.selected_department:
         dept_config = SHARED_SERVICE_DEPARTMENTS[st.session_state.selected_department]
         st.markdown(f"""
         **Selected Service:**  
         {dept_config['icon']} {dept_config['title']}
         """)
+        
+        if st.button("🔄 Change Department", key="change_dept_sidebar", use_container_width=True):
+            navigate_to_step('department_selection')
         
         # Terms acceptance status
         st.markdown("### ✅ Terms Status")
@@ -1325,6 +1331,27 @@ def show_client_sidebar():
         dept_accepted = st.session_state.terms_accepted['department_specific'].get(st.session_state.selected_department, {}).get('accepted', False)
         dept_status = "✅ Accepted" if dept_accepted else "❌ Pending"
         st.markdown(f"**{dept_config['title']} Terms:** {dept_status}")
+        
+        # Quick editing options
+        st.markdown("### ⚡ Quick Edit")
+        
+        # Check if user has selections to edit
+        has_operational = len([s for s in st.session_state.operational_services[st.session_state.selected_department].values() if s.get('selected', False)]) > 0
+        has_custom = len(st.session_state.custom_services[st.session_state.selected_department]) > 0
+        has_support = st.session_state.support_packages[st.session_state.selected_department] is not None
+        has_projects = len(st.session_state.implementation_projects[st.session_state.selected_department]) > 0
+        
+        if has_operational or has_custom:
+            if st.button("🛍️ Edit Services", key="edit_services_sidebar", use_container_width=True):
+                navigate_to_step('services')
+        
+        if has_support:
+            if st.button("🛠️ Edit Support", key="edit_support_sidebar", use_container_width=True):
+                navigate_to_step('support')
+        
+        if has_projects:
+            if st.button("🚀 Edit Projects", key="edit_projects_sidebar", use_container_width=True):
+                navigate_to_step('projects')
     
     st.markdown("---")
     
@@ -1332,27 +1359,59 @@ def show_client_sidebar():
     if st.session_state.selected_department:
         show_budget_summary()
     
-    # Quick navigation
-    st.markdown("### 🧭 Quick Navigation")
+    # Enhanced navigation with completion indicators
+    st.markdown("### 🧭 Navigation & Progress")
     steps = get_workflow_steps()
     
     for step in steps:
-        # Check if step is accessible
+        # Check if step is accessible and completed
         step_accessible = True
-        if step['key'] == 'terms_department' and not st.session_state.terms_accepted['system_wide']['accepted']:
-            step_accessible = False
-        elif step['key'] in ['services', 'support', 'projects'] and not st.session_state.selected_department:
-            step_accessible = False
+        step_completed = False
         
-        button_type = "primary" if step['key'] == st.session_state.current_step else "secondary"
-        disabled = not step_accessible
+        if step['key'] == 'company_info':
+            step_completed = bool(st.session_state.company_info)
+        elif step['key'] == 'terms_system':
+            step_completed = st.session_state.terms_accepted['system_wide']['accepted']
+            if not step_completed:
+                step_accessible = False
+        elif step['key'] == 'department_selection':
+            step_completed = st.session_state.selected_department is not None
+            if not st.session_state.terms_accepted['system_wide']['accepted']:
+                step_accessible = False
+        elif step['key'] == 'terms_department':
+            if st.session_state.selected_department:
+                step_completed = st.session_state.terms_accepted['department_specific'].get(st.session_state.selected_department, {}).get('accepted', False)
+            if not st.session_state.selected_department:
+                step_accessible = False
+        elif step['key'] in ['services', 'support', 'projects', 'terms_submission', 'summary']:
+            if not st.session_state.selected_department:
+                step_accessible = False
+            elif step['key'] == 'services':
+                dept = st.session_state.selected_department
+                step_completed = (len([s for s in st.session_state.operational_services[dept].values() if s.get('selected', False)]) > 0 or 
+                                len(st.session_state.custom_services[dept]) > 0)
         
-        if st.button(f"{step['icon']} {step['title']}", 
+        # Determine button appearance
+        if step['key'] == st.session_state.current_step:
+            button_type = "primary"
+            button_emoji = "👉"
+        elif step_completed:
+            button_type = "secondary"
+            button_emoji = "✅"
+        else:
+            button_type = "secondary"
+            button_emoji = step['icon']
+        
+        button_text = f"{button_emoji} {step['title']}"
+        if step_completed and step['key'] != st.session_state.current_step:
+            button_text += " ✓"
+        
+        if st.button(button_text, 
                     key=f"nav_{step['key']}", 
                     use_container_width=True,
                     type=button_type,
-                    disabled=disabled,
-                    help=step['description']):
+                    disabled=not step_accessible,
+                    help=f"{step['description']} {'(Completed)' if step_completed else ''}"):
             navigate_to_step(step['key'])
 
 def show_admin_sidebar():
@@ -1385,46 +1444,483 @@ def show_admin_sidebar():
         st.info("Please log in with Department Head credentials")
 
 def show_budget_summary():
-    """Show enhanced budget summary in sidebar"""
+    """Show enhanced budget summary with real-time updates and editing options"""
     st.markdown("### 💰 Budget Summary")
     
     dept = st.session_state.selected_department
     if not dept:
         return
     
-    # Calculate totals for current department
+    # Calculate totals for current department with real-time updates
     operational_total = calculate_operational_total(dept)
     support_total = calculate_support_total(dept)
     project_total = calculate_project_total(dept)
     total_budget = operational_total + support_total + project_total
     
     if total_budget > 0:
+        # Enhanced budget display with breakdown
         st.markdown(f"""
-        **Operational:** SAR {operational_total:,.0f}  
-        **Support:** SAR {support_total:,.0f}  
-        **Projects:** SAR {project_total:,.0f}  
-        **Total:** SAR {total_budget:,.0f}
-        """)
+        <div style='background: #f8fafc; border: 2px solid #e5e7eb; border-radius: 12px; padding: 1rem; margin: 1rem 0;'>
+            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;'>
+                <strong style='color: #374151;'>Operational Services:</strong>
+                <strong style='color: {SHARED_SERVICE_DEPARTMENTS[dept]["color"]};'>SAR {operational_total:,.0f}</strong>
+            </div>
+            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;'>
+                <strong style='color: #374151;'>Support Package:</strong>
+                <strong style='color: {SHARED_SERVICE_DEPARTMENTS[dept]["color"]};'>SAR {support_total:,.0f}</strong>
+            </div>
+            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;'>
+                <strong style='color: #374151;'>Projects:</strong>
+                <strong style='color: {SHARED_SERVICE_DEPARTMENTS[dept]["color"]};'>SAR {project_total:,.0f}</strong>
+            </div>
+            <hr style='margin: 0.5rem 0; border: 1px solid #e5e7eb;'>
+            <div style='display: flex; justify-content: space-between; align-items: center;'>
+                <strong style='color: #1f2937; font-size: 1.1em;'>Total Budget:</strong>
+                <strong style='color: {SHARED_SERVICE_DEPARTMENTS[dept]["color"]}; font-size: 1.2em;'>SAR {total_budget:,.0f}</strong>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Budget distribution chart
+        # Budget distribution visualization
         if operational_total > 0 or support_total > 0 or project_total > 0:
             fig = px.pie(
                 values=[operational_total, support_total, project_total],
                 names=['Operational', 'Support', 'Projects'],
-                title=f"{SHARED_SERVICE_DEPARTMENTS[dept]['title']} Budget"
+                title=f"{SHARED_SERVICE_DEPARTMENTS[dept]['title']} Budget",
+                color_discrete_sequence=[SHARED_SERVICE_DEPARTMENTS[dept]['color'], '#10b981', '#f59e0b']
             )
             fig.update_layout(height=250, margin=dict(t=40, b=0, l=0, r=0))
+            fig.update_traces(textposition='inside', textinfo='percent+value')
             st.plotly_chart(fig, use_container_width=True)
-            
-        # High-value service indicator
+        
+        # Selection summary with counts
+        selections_summary = []
+        
+        # Count operational services
+        operational_count = len([s for s in st.session_state.operational_services[dept].values() if s.get('selected', False)])
+        custom_count = len(st.session_state.custom_services[dept])
+        if operational_count > 0 or custom_count > 0:
+            selections_summary.append(f"🛍️ {operational_count + custom_count} services")
+        
+        # Count support package
+        if st.session_state.support_packages[dept]:
+            support_extras_count = sum(st.session_state.support_extras[dept].values())
+            extra_text = f" (+{support_extras_count} extras)" if support_extras_count > 0 else ""
+            selections_summary.append(f"🛠️ 1 support package{extra_text}")
+        
+        # Count projects
+        projects_count = len(st.session_state.implementation_projects[dept])
+        if projects_count > 0:
+            selections_summary.append(f"🚀 {projects_count} projects")
+        
+        if selections_summary:
+            st.markdown(f"**Selections:** {' | '.join(selections_summary)}")
+        
+        # High-value service indicator with enhanced warning
         if total_budget > 100000:
-            st.markdown("""
+            st.markdown(f"""
             <div class='warning-message'>
-                ⚠️ High-Value Service: Additional terms required for budgets >SAR 100,000
+                ⚠️ <strong>High-Value Service Alert</strong><br>
+                Your budget of SAR {total_budget:,.0f} exceeds SAR 100,000.<br>
+                Additional high-value service terms will be required for approval.
             </div>
             """, unsafe_allow_html=True)
+        
+        # Budget change indicator (if we track previous values)
+        if 'previous_budget' in st.session_state and st.session_state.get('previous_budget', {}).get(dept, 0) != total_budget:
+            previous = st.session_state['previous_budget'].get(dept, 0)
+            change = total_budget - previous
+            if change != 0:
+                change_color = "#10b981" if change > 0 else "#ef4444"
+                change_icon = "📈" if change > 0 else "📉"
+                change_text = f"+SAR {change:,.0f}" if change > 0 else f"SAR {change:,.0f}"
+                st.markdown(f"""
+                <div style='background: {change_color}20; border: 1px solid {change_color}; border-radius: 8px; padding: 0.5rem; margin: 0.5rem 0; color: {change_color}; font-weight: 600;'>
+                    {change_icon} Budget Change: {change_text}
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Store current budget for change tracking
+        if 'previous_budget' not in st.session_state:
+            st.session_state.previous_budget = {}
+        st.session_state.previous_budget[dept] = total_budget
+        
     else:
         st.info("No services selected yet")
+        
+        # Quick start suggestions
+        st.markdown("#### 🚀 Quick Start")
+        suggestions = [
+            "Select operational services to begin",
+            "Choose a support package",
+            "Add implementation projects"
+        ]
+        for suggestion in suggestions:
+            st.markdown(f"• {suggestion}")
+
+def show_summary_step():
+    """Step 9: Enhanced Final Summary with Comprehensive Review and Edit Options"""
+    if not st.session_state.selected_department:
+        navigate_to_step('department_selection')
+        return
+    
+    dept = st.session_state.selected_department
+    dept_config = SHARED_SERVICE_DEPARTMENTS[dept]
+    
+    st.markdown(f"## 📊 {dept_config['title']} - Final Budget Summary & Submission")
+    st.markdown("Review your complete service selection. You can still edit any section before final submission.")
+    
+    # Calculate totals
+    operational_total = calculate_operational_total(dept)
+    support_total = calculate_support_total(dept)
+    project_total = calculate_project_total(dept)
+    total_budget = operational_total + support_total + project_total
+    
+    if total_budget == 0:
+        st.warning("No services have been selected. Please go back and make your selections.")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("← Back to Projects", use_container_width=True):
+                navigate_to_step('projects')
+        with col2:
+            if st.button("🛍️ Select Services", use_container_width=True, type="primary"):
+                navigate_to_step('services')
+        with col3:
+            if st.button("🏢 Change Department", use_container_width=True):
+                navigate_to_step('department_selection')
+        return
+    
+    # Enhanced budget overview with edit links
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <h3 style='margin: 0; color: #374151;'>Operational Services</h3>
+            <h2 style='margin: 0.5rem 0; color: {dept_config['color']};'>SAR {operational_total:,.0f}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("✏️ Edit Services", key="edit_services_summary", use_container_width=True):
+            navigate_to_step('services')
+    
+    with col2:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <h3 style='margin: 0; color: #374151;'>Support Package</h3>
+            <h2 style='margin: 0.5rem 0; color: #10b981;'>SAR {support_total:,.0f}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("✏️ Edit Support", key="edit_support_summary", use_container_width=True):
+            navigate_to_step('support')
+    
+    with col3:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <h3 style='margin: 0; color: #374151;'>Implementation Projects</h3>
+            <h2 style='margin: 0.5rem 0; color: #f59e0b;'>SAR {project_total:,.0f}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("✏️ Edit Projects", key="edit_projects_summary", use_container_width=True):
+            navigate_to_step('projects')
+    
+    with col4:
+        st.markdown(f"""
+        <div class='total-budget'>
+            💰 Total Budget<br>
+            <span style='font-size: 1.8em'>SAR {total_budget:,.0f}</span>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Enhanced visualizations with interactivity
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Budget distribution pie chart
+        if total_budget > 0:
+            fig_pie = px.pie(
+                values=[operational_total, support_total, project_total],
+                names=['Operational Services', 'Support Package', 'Implementation Projects'],
+                title=f"{dept_config['title']} Budget Distribution",
+                color_discrete_sequence=[dept_config['color'], '#10b981', '#f59e0b']
+            )
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            fig_pie.update_layout(height=400)
+            st.plotly_chart(fig_pie, use_container_width=True)
+    
+    with col2:
+        # Monthly cash flow projection (enhanced)
+        months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        monthly_costs = [0] * 12
+        
+        # Operational and support typically billed year-end
+        monthly_costs[11] = operational_total + support_total
+        
+        # Projects distributed based on timeline
+        for project in st.session_state.implementation_projects[dept]:
+            timeline = project.get('timeline', 'Q4 2025')
+            budget = project.get('budget', 0)
+            
+            if 'Q1' in timeline:
+                monthly_costs[2] += budget
+            elif 'Q2' in timeline:
+                monthly_costs[5] += budget
+            elif 'Q3' in timeline:
+                monthly_costs[8] += budget
+            elif 'Q4' in timeline:
+                monthly_costs[11] += budget
+            else:  # Multi-quarter
+                monthly_amount = budget / 12
+                monthly_costs = [cost + monthly_amount for cost in monthly_costs]
+        
+        fig_bar = px.bar(
+            x=months,
+            y=monthly_costs,
+            title="2025 Monthly Cash Flow Projection",
+            labels={'y': 'Cost (SAR)', 'x': 'Month'},
+            color_discrete_sequence=[dept_config['color']]
+        )
+        fig_bar.update_layout(height=400)
+        st.plotly_chart(fig_bar, use_container_width=True)
+    
+    # Comprehensive detailed service breakdown with edit options
+    st.markdown("### 📋 Detailed Service Selection Review")
+    
+    # Create tabs for different categories
+    tabs = st.tabs(["🛍️ Operational Services", "🛠️ Support Package", "🚀 Implementation Projects"])
+    
+    with tabs[0]:
+        # Operational services details with edit option
+        if operational_total > 0:
+            st.markdown(f"#### {dept_config['title']} Operational Services")
+            
+            service_total = 0
+            service_count = 0
+            
+            for service_key, data in st.session_state.operational_services[dept].items():
+                if data.get('selected', False) and data.get('annual_cost', 0) > 0:
+                    service_name = service_key.replace('_', ' ').title()
+                    service_total += data['annual_cost']
+                    service_count += 1
+                    
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        # Special display for IT services with license info
+                        if dept == "IT" and 'current_count' in data:
+                            current = data.get('current_count', 0)
+                            requested = data.get('requested_count', 0)
+                            delta = data.get('license_delta', 0)
+                            delta_text = f" ({delta:+d} licenses)" if delta != 0 else " (no change)"
+                            st.markdown(f"**{service_name}** - Current: {current}, Requested: {requested}{delta_text}")
+                        else:
+                            volume = data.get('volume', data.get('requested_count', 0))
+                            st.markdown(f"**{service_name}** - Quantity: {volume}")
+                    
+                    with col2:
+                        st.markdown(f"**SAR {data['annual_cost']:,.0f}**")
+            
+            # Custom services
+            for service in st.session_state.custom_services[dept]:
+                service_total += service['annual_cost']
+                service_count += 1
+                
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.markdown(f"**{service['name']}** (Custom) - {service['description']}")
+                with col2:
+                    st.markdown(f"**SAR {service['annual_cost']:,.0f}**")
+            
+            st.markdown(f"**Total: {service_count} services - SAR {service_total:,.0f}**")
+            
+            if st.button("✏️ Modify Operational Services", key="modify_services_tab", use_container_width=True):
+                navigate_to_step('services')
+        else:
+            st.info("No operational services selected.")
+            if st.button("➕ Add Operational Services", key="add_services_tab", use_container_width=True, type="primary"):
+                navigate_to_step('services')
+    
+    with tabs[1]:
+        # Support package details with edit option
+        if support_total > 0:
+            package_name = st.session_state.support_packages[dept]
+            st.markdown(f"#### Support Package: {package_name}")
+            
+            base_cost = st.session_state.admin_support_packages[package_name]['price']
+            extras = st.session_state.support_extras[dept]
+            extra_cost = extras['support'] * 1800 + extras['training'] * 5399 + extras['reports'] * 5399
+            
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.markdown(f"**{package_name} Package**")
+                package_details = st.session_state.admin_support_packages[package_name]
+                st.markdown(f"- {package_details['support_requests']} support requests")
+                st.markdown(f"- {package_details['training']} training sessions")
+                st.markdown(f"- {package_details['reports']} custom reports")
+                st.markdown(f"- {package_details['improvement_hours']} improvement hours")
+            with col2:
+                st.markdown(f"**SAR {base_cost:,.0f}**")
+            
+            if extra_cost > 0:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    extra_items = []
+                    if extras['support'] > 0:
+                        extra_items.append(f"{extras['support']} extra support requests")
+                    if extras['training'] > 0:
+                        extra_items.append(f"{extras['training']} extra training sessions")
+                    if extras['reports'] > 0:
+                        extra_items.append(f"{extras['reports']} extra reports")
+                    st.markdown(f"**Additional Services:** {', '.join(extra_items)}")
+                with col2:
+                    st.markdown(f"**SAR {extra_cost:,.0f}**")
+            
+            st.markdown(f"**Total Support: SAR {support_total:,.0f}**")
+            
+            if st.button("✏️ Modify Support Package", key="modify_support_tab", use_container_width=True):
+                navigate_to_step('support')
+        else:
+            st.info("No support package selected.")
+            if st.button("➕ Add Support Package", key="add_support_tab", use_container_width=True, type="primary"):
+                navigate_to_step('support')
+    
+    with tabs[2]:
+        # Implementation projects details with edit option
+        if project_total > 0:
+            st.markdown(f"#### Implementation Projects")
+            
+            projects = st.session_state.implementation_projects[dept]
+            for project in projects:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    rpa_text = f" (RPA: {project['rpa_package']})" if project.get('rpa_package') else ""
+                    st.markdown(f"**{project['name']}**{rpa_text}")
+                    st.markdown(f"- Timeline: {project['timeline']}")
+                    st.markdown(f"- Priority: {project['priority']}")
+                    if project.get('description'):
+                        st.markdown(f"- {project['description']}")
+                with col2:
+                    st.markdown(f"**SAR {project['budget']:,.0f}**")
+            
+            st.markdown(f"**Total Projects: {len(projects)} - SAR {project_total:,.0f}**")
+            
+            if st.button("✏️ Modify Projects", key="modify_projects_tab", use_container_width=True):
+                navigate_to_step('projects')
+        else:
+            st.info("No implementation projects defined.")
+            if st.button("➕ Add Implementation Projects", key="add_projects_tab", use_container_width=True, type="primary"):
+                navigate_to_step('projects')
+    
+    # Terms compliance summary
+    st.markdown("### ✅ Terms Compliance Summary")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        system_status = "✅ Accepted" if st.session_state.terms_accepted['system_wide']['accepted'] else "❌ Not Accepted"
+        st.markdown(f"**System Terms:** {system_status}")
+    
+    with col2:
+        dept_status = "✅ Accepted" if st.session_state.terms_accepted['department_specific'].get(dept, {}).get('accepted', False) else "❌ Not Accepted"
+        st.markdown(f"**{dept_config['title']} Terms:** {dept_status}")
+    
+    with col3:
+        budget_status = "✅ Accepted" if st.session_state.terms_accepted['budget_submission']['accepted'] else "❌ Not Accepted"
+        st.markdown(f"**Budget Submission Terms:** {budget_status}")
+    
+    if total_budget > 100000:
+        high_value_status = "✅ Accepted" if st.session_state.terms_accepted['high_value_services']['accepted'] else "❌ Not Accepted"
+        st.markdown(f"**High-Value Service Terms:** {high_value_status}")
+    
+    # Final submission section
+    st.markdown("### 📤 Submit Your Budget Request")
+    
+    # Check all terms are accepted
+    all_terms_accepted = (
+        st.session_state.terms_accepted['system_wide']['accepted'] and
+        st.session_state.terms_accepted['department_specific'].get(dept, {}).get('accepted', False) and
+        st.session_state.terms_accepted['budget_submission']['accepted'] and
+        (st.session_state.terms_accepted['high_value_services']['accepted'] if total_budget > 100000 else True)
+    )
+    
+    if not all_terms_accepted:
+        st.error("❌ All required terms must be accepted before submission.")
+        if st.button("Review Terms & Conditions", type="primary", use_container_width=True):
+            navigate_to_step('terms_submission')
+        return
+    
+    # Action buttons
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        if st.button("📊 Export Summary", use_container_width=True):
+            st.success("📊 Excel export would generate a comprehensive budget report with all selections.")
+    
+    with col2:
+        if st.button("💾 Save Draft", use_container_width=True):
+            st.success("💾 Draft saved! You can return to edit anytime.")
+    
+    with col3:
+        if st.button("📧 Share Summary", use_container_width=True):
+            st.success("📧 Budget summary prepared for sharing with stakeholders.")
+    
+    with col4:
+        if st.button("🚀 Submit Final Budget", type="primary", use_container_width=True):
+            # Generate comprehensive submission confirmation
+            company_code = st.session_state.company_info.get('company', 'ALK')
+            dept_code = dept[:3].upper()
+            reference_id = f"{company_code}-{dept_code}-2025-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
+            st.balloons()
+            st.success(f"""
+            ✅ **Budget Successfully Submitted!**
+            
+            **Reference ID:** {reference_id}
+            
+            **Submission Summary:**
+            - Company: {st.session_state.company_info.get('company', 'N/A')}
+            - Requesting Department: {st.session_state.company_info.get('department', 'N/A')}
+            - Shared Service: {dept_config['title']}
+            - Contact: {st.session_state.company_info.get('contact_person', 'N/A')} ({st.session_state.company_info.get('email', 'N/A')})
+            - Total Budget: SAR {total_budget:,.0f}
+            - Breakdown: Operational (SAR {operational_total:,.0f}) | Support (SAR {support_total:,.0f}) | Projects (SAR {project_total:,.0f})
+            
+            **Selection Summary:**
+            - Operational Services: {len([s for s in st.session_state.operational_services[dept].values() if s.get('selected', False)]) + len(st.session_state.custom_services[dept])} services
+            - Support Package: {st.session_state.support_packages[dept] or 'None'}
+            - Implementation Projects: {len(st.session_state.implementation_projects[dept])} projects
+            
+            **Terms Compliance:**
+            - System Terms: ✅ Accepted
+            - {dept_config['title']} Terms: ✅ Accepted
+            - Budget Submission: ✅ Accepted
+            {f"- High-Value Services: ✅ Accepted" if total_budget > 100000 else ""}
+            
+            **Next Steps:**
+            1. {dept_config['title']} team review (3-5 business days)
+            2. Finance approval process (1-2 weeks)  
+            3. Service implementation planning (Q4 2024)
+            4. Service delivery commencement (Q1 2025)
+            
+            A detailed budget report has been sent to your email and the {dept_config['title']} shared services team.
+            """)
+            
+            # Reset selections indicator for future use
+            if 'previous_budget' in st.session_state:
+                st.session_state.previous_budget[dept] = 0
+            
+            # Option to start with another department
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔄 Budget for Another Department", type="secondary", use_container_width=True):
+                    st.session_state.selected_department = None
+                    navigate_to_step('department_selection')
+            with col2:
+                if st.button("🏠 Return to Home", use_container_width=True):
+                    for key in ['selected_department', 'current_step']:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    st.session_state.current_step = 'company_info'
+                    st.rerun()
 
 # ==================== STEP IMPLEMENTATIONS - PLACEHOLDERS ====================
 
@@ -1575,55 +2071,446 @@ def show_department_terms_step():
             navigate_to_step('services')
 
 def show_services_step():
-    """Step 5: Services Selection (Simplified)"""
+    """Step 5: Enhanced Operational Services Selection with Editing Capabilities"""
     if not st.session_state.selected_department:
         navigate_to_step('department_selection')
         return
     
     dept = st.session_state.selected_department
     dept_config = SHARED_SERVICE_DEPARTMENTS[dept]
-    
-    st.markdown(f"## 🛍️ {dept_config['title']} - Service Selection")
-    st.markdown("Select the services you need. This is a simplified demo version.")
-    
-    # Show simplified service selection
     services = st.session_state.admin_services[dept]
     
-    for service_name, details in services.items():
-        with st.expander(f"{service_name} - SAR {details.get('price_per_user', 100)}/month"):
-            st.markdown(details['description'])
-            
-            selected = st.checkbox(f"Include {service_name}", key=f"service_{service_name}")
-            
-            if selected:
-                quantity = st.number_input("Quantity", min_value=1, value=10, key=f"qty_{service_name}")
-                
-                # Simple cost calculation
-                pricing_key = next(k for k in details.keys() if k.startswith('price_per_'))
-                monthly_cost = details[pricing_key] * quantity
-                annual_cost = monthly_cost * 12 + details['setup_cost']
-                
-                st.info(f"Annual Cost: SAR {annual_cost:,.0f}")
-                
-                # Store in session state
-                service_key = service_name.replace(' ', '_').lower()
-                st.session_state.operational_services[dept][service_key] = {
-                    'selected': True,
-                    'quantity': quantity,
-                    'annual_cost': annual_cost
-                }
+    st.markdown(f"## 🛍️ {dept_config['title']} - Operational Services")
+    
+    # Check if user is editing existing selections
+    has_existing_selections = (
+        len([s for s in st.session_state.operational_services[dept].values() if s.get('selected', False)]) > 0 or 
+        len(st.session_state.custom_services[dept]) > 0
+    )
+    
+    if has_existing_selections:
+        st.markdown(f"""
+        <div class='success-message'>
+            ✅ You have existing service selections. You can modify, add more services, or remove selections below.
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Show current selections summary
+        show_current_services_summary(dept)
+    else:
+        st.markdown(f"Select the operational services you need for {dept_config['title']}.")
+    
+    # Show current license inventory for IT department
+    if dept == "IT":
+        show_license_inventory()
+    
+    # Service selection with editing capabilities
+    if dept == "IT":
+        show_it_services_with_editing(dept)
+    else:
+        show_general_services_with_editing(dept)
+    
+    # Enhanced custom services section with editing
+    show_custom_services_section_with_editing(dept)
     
     # Navigation
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("← Back", use_container_width=True):
+        if st.button("← Back to Department Terms", use_container_width=True):
             navigate_to_step('terms_department')
     with col2:
-        if st.button("Continue to Support →", type="primary", use_container_width=True):
+        if st.button("Continue to Support Packages →", type="primary", use_container_width=True):
             navigate_to_step('support')
 
+def show_current_services_summary(dept):
+    """Show summary of currently selected services with quick remove options"""
+    st.markdown("### 📋 Current Service Selections")
+    
+    # Operational services
+    selected_services = {k: v for k, v in st.session_state.operational_services[dept].items() if v.get('selected', False)}
+    
+    if selected_services:
+        st.markdown("#### Selected Standard Services")
+        for service_key, data in selected_services.items():
+            service_name = service_key.replace('_', ' ').title()
+            
+            col1, col2, col3 = st.columns([3, 1, 1])
+            
+            with col1:
+                if dept == "IT" and 'current_count' in data:
+                    current = data.get('current_count', 0)
+                    requested = data.get('requested_count', 0)
+                    delta = data.get('license_delta', 0)
+                    delta_text = f" ({delta:+d} licenses)" if delta != 0 else " (no change)"
+                    st.markdown(f"**{service_name}** - Current: {current}, Requested: {requested}{delta_text}")
+                else:
+                    volume = data.get('volume', data.get('requested_count', 0))
+                    st.markdown(f"**{service_name}** - Quantity: {volume}")
+            
+            with col2:
+                st.markdown(f"**SAR {data.get('annual_cost', 0):,.0f}**")
+            
+            with col3:
+                if st.button("🗑️ Remove", key=f"remove_service_{service_key}", use_container_width=True):
+                    st.session_state.operational_services[dept][service_key] = {
+                        'selected': False,
+                        'volume': 0,
+                        'requested_count': 0,
+                        'annual_cost': 0
+                    }
+                    st.success(f"Removed {service_name}")
+                    st.rerun()
+    
+    # Custom services
+    if st.session_state.custom_services[dept]:
+        st.markdown("#### Custom Services")
+        for i, service in enumerate(st.session_state.custom_services[dept]):
+            col1, col2, col3 = st.columns([3, 1, 1])
+            
+            with col1:
+                st.markdown(f"**{service['name']}** - {service['description']}")
+            
+            with col2:
+                st.markdown(f"**SAR {service.get('annual_cost', 0):,.0f}**")
+            
+            with col3:
+                if st.button("🗑️ Remove", key=f"remove_custom_{i}", use_container_width=True):
+                    st.session_state.custom_services[dept].pop(i)
+                    st.success(f"Removed {service['name']}")
+                    st.rerun()
+    
+    st.markdown("---")
+
+def show_it_services_with_editing(dept):
+    """Show IT services with comprehensive editing capabilities"""
+    st.markdown("### 💻 IT Services - Add or Modify Selections")
+    
+    services = st.session_state.admin_services["IT"]
+    
+    # Add expand/collapse for better UX
+    show_all = st.checkbox("🔍 Show all available services", value=False)
+    
+    col1, col2 = st.columns(2)
+    service_items = list(services.items())
+    
+    for i, (service_name, details) in enumerate(service_items):
+        col = col1 if i % 2 == 0 else col2
+        
+        with col:
+            service_key = service_name.replace(' ', '_').lower()
+            
+            # Check if this service has current licenses
+            current_license_info = st.session_state.current_licenses.get(service_name, None)
+            
+            # Initialize service data if not exists
+            if service_key not in st.session_state.operational_services["IT"]:
+                st.session_state.operational_services["IT"][service_key] = {
+                    'selected': False,
+                    'requested_count': current_license_info['current_count'] if current_license_info else 0,
+                    'new_implementation': not bool(current_license_info),
+                    'annual_cost': 0
+                }
+            
+            service_data = st.session_state.operational_services["IT"][service_key]
+            is_currently_selected = service_data.get('selected', False)
+            
+            # Only show if selected or if user wants to see all
+            if is_currently_selected or show_all:
+                # Service card with enhanced editing
+                status_color = SHARED_SERVICE_DEPARTMENTS["IT"]["color"] if is_currently_selected else "#9ca3af"
+                status_text = "✅ SELECTED" if is_currently_selected else "Available"
+                
+                st.markdown(f"""
+                <div class='service-card' style='border-color: {status_color}; position: relative;'>
+                    <div style='position: absolute; top: 10px; right: 10px; background: {status_color}; color: white; padding: 0.25rem 0.5rem; border-radius: 8px; font-size: 0.7rem; font-weight: 600;'>{status_text}</div>
+                    <h4>{service_name}</h4>
+                    <p style='color: #6b7280; font-size: 0.9em;'>{details['description']}</p>
+                    <div style='background: {SHARED_SERVICE_DEPARTMENTS["IT"]["color"]}10; padding: 0.5rem; border-radius: 8px; margin: 0.5rem 0;'>
+                        💰 SAR {details['price_per_user']}/user/month<br>
+                        🆕 Setup Cost: SAR {details['setup_cost']:,}
+                        {f"<br>📊 Current: {current_license_info['current_count']} licenses" if current_license_info else ""}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Enhanced selection controls
+                selected = st.checkbox(f"Include {service_name}", 
+                                     key=f"IT_{service_key}_selected",
+                                     value=service_data['selected'])
+                
+                if selected:
+                    if current_license_info:
+                        # Existing service - show license delta management
+                        st.markdown(f"**Current Licenses:** {current_license_info['current_count']}")
+                        
+                        min_allowed = current_license_info['min_commitment'] if not current_license_info['can_reduce'] else 0
+                        
+                        requested_count = st.number_input(
+                            f"Requested License Count", 
+                            min_value=min_allowed,
+                            value=max(service_data['requested_count'], min_allowed),
+                            key=f"IT_{service_key}_count",
+                            help=f"Minimum allowed: {min_allowed} licenses"
+                        )
+                        
+                        # Calculate delta with visual indicator
+                        license_delta = requested_count - current_license_info['current_count']
+                        
+                        if license_delta > 0:
+                            st.success(f"➕ Adding {license_delta} new licenses")
+                            monthly_cost = details['price_per_user'] * license_delta
+                            annual_cost = monthly_cost * 12
+                            setup_cost = 0  # No setup for additional licenses
+                            new_implementation = False
+                        elif license_delta < 0:
+                            if current_license_info['can_reduce']:
+                                st.warning(f"➖ Reducing {abs(license_delta)} licenses")
+                                annual_cost = 0  # No additional cost for reductions
+                                setup_cost = 0
+                            else:
+                                st.error(f"❌ Cannot reduce licenses below {current_license_info['min_commitment']} (contract restriction)")
+                                annual_cost = 0
+                                setup_cost = 0
+                            monthly_cost = 0
+                            new_implementation = False
+                        else:
+                            st.info("📊 No change in license count")
+                            annual_cost = 0
+                            setup_cost = 0
+                            monthly_cost = 0
+                            new_implementation = False
+                        
+                    else:
+                        # New service
+                        new_implementation = st.checkbox("🆕 New Implementation", 
+                                                       key=f"IT_{service_key}_new_impl",
+                                                       value=service_data.get('new_implementation', True))
+                        
+                        requested_count = st.number_input(f"Number of Licenses", 
+                                                        min_value=0, 
+                                                        value=service_data['requested_count'],
+                                                        key=f"IT_{service_key}_count")
+                        
+                        if requested_count > 0:
+                            monthly_cost = details['price_per_user'] * requested_count
+                            annual_cost = monthly_cost * 12
+                            setup_cost = details['setup_cost'] if new_implementation else 0
+                    
+                    # Update session state
+                    total_cost = annual_cost + setup_cost
+                    st.session_state.operational_services["IT"][service_key] = {
+                        'selected': True,
+                        'requested_count': requested_count,
+                        'new_implementation': new_implementation if not current_license_info else False,
+                        'annual_cost': total_cost,
+                        'current_count': current_license_info['current_count'] if current_license_info else 0,
+                        'license_delta': license_delta if current_license_info else requested_count
+                    }
+                    
+                    # Enhanced cost display
+                    if total_cost > 0:
+                        st.markdown(f"""
+                        <div class='cost-display' style='border-color: {SHARED_SERVICE_DEPARTMENTS["IT"]["color"]}; background: {SHARED_SERVICE_DEPARTMENTS["IT"]["color"]}10;'>
+                            📊 Monthly: SAR {monthly_cost:,.0f}<br>
+                            🏗️ Setup: SAR {setup_cost:,.0f}<br>
+                            <strong>Annual Total: SAR {total_cost:,.0f}</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Save changes indicator
+                        if is_currently_selected and total_cost != service_data.get('annual_cost', 0):
+                            st.info("💾 Changes will be saved automatically")
+                else:
+                    # If deselected, clear the data
+                    st.session_state.operational_services["IT"][service_key] = {
+                        'selected': False,
+                        'requested_count': 0,
+                        'new_implementation': False,
+                        'annual_cost': 0
+                    }
+
+def show_general_services_with_editing(department):
+    """Show services for non-IT departments with editing capabilities"""
+    st.markdown(f"### {SHARED_SERVICE_DEPARTMENTS[department]['icon']} {SHARED_SERVICE_DEPARTMENTS[department]['title']} Services - Add or Modify")
+    
+    services = st.session_state.admin_services[department]
+    
+    # Add expand/collapse for better UX
+    show_all = st.checkbox("🔍 Show all available services", value=False)
+    
+    col1, col2 = st.columns(2)
+    service_items = list(services.items())
+    
+    for i, (service_name, details) in enumerate(service_items):
+        col = col1 if i % 2 == 0 else col2
+        
+        with col:
+            service_key = service_name.replace(' ', '_').lower()
+            
+            # Initialize service data if not exists
+            if service_key not in st.session_state.operational_services[department]:
+                st.session_state.operational_services[department][service_key] = {
+                    'selected': False,
+                    'volume': 0,
+                    'new_implementation': False,
+                    'annual_cost': 0
+                }
+            
+            service_data = st.session_state.operational_services[department][service_key]
+            is_currently_selected = service_data.get('selected', False)
+            
+            # Only show if selected or if user wants to see all
+            if is_currently_selected or show_all:
+                # Determine pricing model
+                pricing_key = next((k for k in details.keys() if k.startswith('price_per_')), 'price_per_user')
+                unit_name = pricing_key.replace('price_per_', '').replace('_', ' ').title()
+                unit_price = details[pricing_key]
+                
+                # Enhanced service card
+                status_color = SHARED_SERVICE_DEPARTMENTS[department]["color"] if is_currently_selected else "#9ca3af"
+                status_text = "✅ SELECTED" if is_currently_selected else "Available"
+                
+                st.markdown(f"""
+                <div class='service-card' style='border-color: {status_color}; position: relative;'>
+                    <div style='position: absolute; top: 10px; right: 10px; background: {status_color}; color: white; padding: 0.25rem 0.5rem; border-radius: 8px; font-size: 0.7rem; font-weight: 600;'>{status_text}</div>
+                    <h4>{service_name}</h4>
+                    <p style='color: #6b7280; font-size: 0.9em;'>{details['description']}</p>
+                    <div style='background: {SHARED_SERVICE_DEPARTMENTS[department]["color"]}10; padding: 0.5rem; border-radius: 8px; margin: 0.5rem 0;'>
+                        💰 SAR {unit_price}/{unit_name.lower()}/month<br>
+                        🆕 Setup Cost: SAR {details['setup_cost']:,}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Enhanced service selection controls
+                selected = st.checkbox(f"Include {service_name}", 
+                                     key=f"{department}_{service_key}_selected",
+                                     value=service_data['selected'])
+                
+                if selected:
+                    new_impl = st.checkbox("New Implementation", 
+                                         key=f"{department}_{service_key}_new_impl",
+                                         value=service_data['new_implementation'])
+                    
+                    volume = st.number_input(f"Number of {unit_name}s", 
+                                           min_value=0, 
+                                           value=service_data['volume'],
+                                           key=f"{department}_{service_key}_volume")
+                    
+                    if volume > 0:
+                        if 'per_user' in pricing_key:
+                            monthly_cost = unit_price * volume
+                            annual_cost = monthly_cost * 12
+                        else:
+                            annual_cost = unit_price * volume
+                            monthly_cost = annual_cost / 12
+                        
+                        setup_cost = details['setup_cost'] if new_impl else 0
+                        total_cost = annual_cost + setup_cost
+                        
+                        st.markdown(f"""
+                        <div class='cost-display' style='border-color: {SHARED_SERVICE_DEPARTMENTS[department]["color"]}; background: {SHARED_SERVICE_DEPARTMENTS[department]["color"]}10;'>
+                            📊 Annual: SAR {annual_cost:,.0f}<br>
+                            🏗️ Setup: SAR {setup_cost:,.0f}<br>
+                            <strong>Total: SAR {total_cost:,.0f}</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Update session state
+                        st.session_state.operational_services[department][service_key] = {
+                            'selected': True,
+                            'volume': volume,
+                            'new_implementation': new_impl,
+                            'annual_cost': total_cost
+                        }
+                        
+                        # Save changes indicator
+                        if is_currently_selected and total_cost != service_data.get('annual_cost', 0):
+                            st.info("💾 Changes will be saved automatically")
+                    else:
+                        st.session_state.operational_services[department][service_key] = {
+                            'selected': True,
+                            'volume': 0,
+                            'new_implementation': new_impl,
+                            'annual_cost': 0
+                        }
+                else:
+                    st.session_state.operational_services[department][service_key] = {
+                        'selected': False,
+                        'volume': 0,
+                        'new_implementation': False,
+                        'annual_cost': 0
+                    }
+
+def show_custom_services_section_with_editing(department):
+    """Show custom services section with comprehensive editing capabilities"""
+    st.markdown("---")
+    st.markdown("### ➕ Custom Services")
+    
+    dept_config = SHARED_SERVICE_DEPARTMENTS[department]
+    
+    # Show existing custom services with edit/remove options
+    if st.session_state.custom_services[department]:
+        st.markdown("#### Your Custom Services")
+        
+        for i, service in enumerate(st.session_state.custom_services[department]):
+            with st.expander(f"✏️ Edit: {service['name']} - SAR {service['annual_cost']:,.0f}"):
+                col1, col2, col3 = st.columns([2, 2, 1])
+                
+                with col1:
+                    new_name = st.text_input("Service Name", value=service['name'], key=f"edit_custom_name_{i}")
+                    new_description = st.text_area("Description", value=service['description'], key=f"edit_custom_desc_{i}")
+                
+                with col2:
+                    new_price = st.number_input("Annual Cost (SAR)", min_value=0, value=service['annual_cost'], key=f"edit_custom_price_{i}")
+                    new_setup = st.number_input("Setup Cost (SAR)", min_value=0, value=service.get('setup_cost', 0), key=f"edit_custom_setup_{i}")
+                
+                with col3:
+                    if st.button("💾 Update", key=f"update_custom_{i}", use_container_width=True):
+                        st.session_state.custom_services[department][i] = {
+                            'name': new_name,
+                            'description': new_description,
+                            'annual_cost': new_price,
+                            'setup_cost': new_setup
+                        }
+                        st.success(f"✅ Updated {new_name}")
+                        st.rerun()
+                    
+                    if st.button("🗑️ Remove", key=f"remove_custom_edit_{i}", use_container_width=True):
+                        service_name = service['name']
+                        st.session_state.custom_services[department].pop(i)
+                        st.success(f"🗑️ Removed {service_name}")
+                        st.rerun()
+    
+    # Add new custom service
+    with st.expander("➕ Add New Custom Service"):
+        with st.form(f"custom_service_{department}"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                custom_name = st.text_input("Service Name")
+                custom_description = st.text_area("Description")
+            
+            with col2:
+                custom_price = st.number_input("Annual Cost (SAR)", min_value=0, value=50000)
+                custom_setup = st.number_input("Setup Cost (SAR)", min_value=0, value=0)
+            
+            if st.form_submit_button("Add Custom Service", type="primary"):
+                if custom_name and custom_description:
+                    custom_service = {
+                        'name': custom_name,
+                        'description': custom_description,
+                        'annual_cost': custom_price,
+                        'setup_cost': custom_setup
+                    }
+                    st.session_state.custom_services[department].append(custom_service)
+                    st.success(f"✅ Added custom service: {custom_name}")
+                    st.rerun()
+                else:
+                    st.error("Please provide both service name and description.")
+
 def show_support_step():
-    """Step 6: Support Package Selection (Simplified)"""
+    """Step 6: Enhanced Support Package Selection with Editing"""
     if not st.session_state.selected_department:
         navigate_to_step('department_selection')
         return
@@ -1631,28 +2518,183 @@ def show_support_step():
     dept = st.session_state.selected_department
     dept_config = SHARED_SERVICE_DEPARTMENTS[dept]
     
-    st.markdown(f"## 🛠️ {dept_config['title']} - Support Package")
+    st.markdown(f"## 🛠️ {dept_config['title']} - Support Packages")
     
-    # Show support packages
+    # Check if user has existing selections
+    current_package = st.session_state.support_packages[dept]
+    current_extras = st.session_state.support_extras[dept]
+    has_existing_support = current_package is not None
+    
+    if has_existing_support:
+        st.markdown(f"""
+        <div class='success-message'>
+            ✅ Current Selection: <strong>{current_package}</strong> - You can modify your support package selection below.
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Show current support summary with remove option
+        show_current_support_summary(dept)
+    else:
+        st.markdown("Choose the support level that best fits your needs.")
+    
+    # Support package comparison
     packages = st.session_state.admin_support_packages
+    
+    # Filter packages available for this department
     available_packages = {name: details for name, details in packages.items() 
                          if dept in details.get('departments', [])}
     
-    selected_package = st.selectbox("Choose Support Package", 
-                                   options=['None'] + list(available_packages.keys()))
+    if not available_packages:
+        st.warning(f"No support packages are currently available for {dept_config['title']}.")
+        # Navigation
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("← Back to Services", use_container_width=True):
+                navigate_to_step('services')
+        with col2:
+            if st.button("Continue to Projects →", type="primary", use_container_width=True):
+                navigate_to_step('projects')
+        return
     
-    if selected_package != 'None':
-        st.session_state.support_packages[dept] = selected_package
-        package_details = available_packages[selected_package]
+    # Create comparison table
+    comparison_data = {
+        'Package': list(available_packages.keys()),
+        'Price (SAR)': [f"SAR {pkg['price']:,.0f}" for pkg in available_packages.values()],
+        'Support Requests': [pkg['support_requests'] for pkg in available_packages.values()],
+        'Training Sessions': [pkg['training'] for pkg in available_packages.values()],
+        'Custom Reports': [pkg['reports'] for pkg in available_packages.values()],
+        'Improvement Hours': [pkg['improvement_hours'] for pkg in available_packages.values()],
+        'Description': [pkg['description'] for pkg in available_packages.values()]
+    }
+    
+    df = pd.DataFrame(comparison_data)
+    st.dataframe(df, use_container_width=True)
+    
+    # Enhanced package selection with editing
+    st.markdown("### Select or Change Your Support Package")
+    
+    cols = st.columns(len(available_packages))
+    
+    for i, (package_name, details) in enumerate(available_packages.items()):
+        with cols[i]:
+            is_selected = st.session_state.support_packages[dept] == package_name
+            
+            # Enhanced package card with selection status
+            if is_selected:
+                bg_color = f"{dept_config['color']}20"
+                border_color = dept_config['color']
+                status_badge = f'<div style="position: absolute; top: 10px; right: 10px; background: {dept_config["color"]}; color: white; padding: 0.25rem 0.5rem; border-radius: 8px; font-size: 0.7rem; font-weight: 600;">SELECTED</div>'
+            else:
+                bg_color = "#f8fafc"
+                border_color = "#e5e7eb"
+                status_badge = ""
+            
+            st.markdown(f"""
+            <div style='background: {bg_color}; border: 3px solid {border_color}; border-radius: 12px; padding: 1rem; text-align: center; margin-bottom: 1rem; position: relative; min-height: 200px;'>
+                {status_badge}
+                <h4 style='margin: 0 0 0.5rem 0;'>{package_name}</h4>
+                <h3 style='color: {dept_config["color"]}; margin: 0 0 0.5rem 0;'>SAR {details["price"]:,.0f}</h3>
+                <p style='font-size: 0.85em; margin: 0;'>{details["description"]}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown(f"""
+            **🛠️ Support:** {details['support_requests']}  
+            **🎓 Training:** {details['training']}  
+            **📊 Reports:** {details['reports']}  
+            **⚡ Improvement:** {details['improvement_hours']}h
+            """)
+            
+            if is_selected:
+                if st.button("🗑️ Remove Selection", 
+                            key=f"remove_support_{package_name}_{dept}", 
+                            use_container_width=True,
+                            type="secondary"):
+                    st.session_state.support_packages[dept] = None
+                    st.session_state.support_extras[dept] = {'support': 0, 'training': 0, 'reports': 0}
+                    st.success(f"Removed {package_name} support package")
+                    st.rerun()
+            else:
+                if st.button(f"Select {package_name}", 
+                            key=f"select_support_{package_name}_{dept}", 
+                            type="primary",
+                            use_container_width=True):
+                    st.session_state.support_packages[dept] = package_name
+                    st.success(f"✅ Selected {package_name} support package")
+                    st.rerun()
+    
+    # Enhanced additional services section
+    if st.session_state.support_packages[dept]:
+        st.markdown("---")
+        st.markdown("### ➕ Additional Support Services")
+        st.markdown("Add extra support beyond your selected package:")
         
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("#### 🛠️ Extra Support Requests")
+            current_extra_support = st.session_state.support_extras[dept]['support']
+            extra_support = st.number_input("Additional Support Requests", 
+                                          min_value=0, 
+                                          value=current_extra_support,
+                                          key=f"extra_support_{dept}",
+                                          help="SAR 1,800 per additional support request")
+            
+            if extra_support != current_extra_support:
+                st.session_state.support_extras[dept]['support'] = extra_support
+                if extra_support > current_extra_support:
+                    st.success(f"Added {extra_support - current_extra_support} extra support requests")
+                elif extra_support < current_extra_support:
+                    st.info(f"Removed {current_extra_support - extra_support} extra support requests")
+            
+            if extra_support > 0:
+                st.info(f"💰 Cost: SAR {extra_support * 1800:,}")
+        
+        with col2:
+            st.markdown("#### 🎓 Extra Training Sessions")
+            current_extra_training = st.session_state.support_extras[dept]['training']
+            extra_training = st.number_input("Additional Training Sessions", 
+                                           min_value=0, 
+                                           value=current_extra_training,
+                                           key=f"extra_training_{dept}",
+                                           help="SAR 5,399 per additional training session")
+            
+            if extra_training != current_extra_training:
+                st.session_state.support_extras[dept]['training'] = extra_training
+                if extra_training > current_extra_training:
+                    st.success(f"Added {extra_training - current_extra_training} extra training sessions")
+                elif extra_training < current_extra_training:
+                    st.info(f"Removed {current_extra_training - extra_training} extra training sessions")
+            
+            if extra_training > 0:
+                st.info(f"💰 Cost: SAR {extra_training * 5399:,}")
+        
+        with col3:
+            st.markdown("#### 📋 Extra Custom Reports")
+            current_extra_reports = st.session_state.support_extras[dept]['reports']
+            extra_reports = st.number_input("Additional Custom Reports", 
+                                          min_value=0, 
+                                          value=current_extra_reports,
+                                          key=f"extra_reports_{dept}",
+                                          help="SAR 5,399 per additional custom report")
+            
+            if extra_reports != current_extra_reports:
+                st.session_state.support_extras[dept]['reports'] = extra_reports
+                if extra_reports > current_extra_reports:
+                    st.success(f"Added {extra_reports - current_extra_reports} extra reports")
+                elif extra_reports < current_extra_reports:
+                    st.info(f"Removed {current_extra_reports - extra_reports} extra reports")
+            
+            if extra_reports > 0:
+                st.info(f"💰 Cost: SAR {extra_reports * 5399:,}")
+        
+        # Total support cost display with change indicator
+        total_support = calculate_support_total(dept)
         st.markdown(f"""
-        **{selected_package} Package**
-        - **Price:** SAR {package_details['price']:,.0f}
-        - **Support Requests:** {package_details['support_requests']}
-        - **Training:** {package_details['training']} sessions
-        - **Reports:** {package_details['reports']}
-        - **Description:** {package_details['description']}
-        """)
+        <div class='cost-display' style='border-color: {dept_config["color"]}; background: {dept_config["color"]}10;'>
+            💰 Total Support Package Cost: <strong>SAR {total_support:,.0f}</strong>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Navigation
     col1, col2 = st.columns(2)
@@ -1663,8 +2705,44 @@ def show_support_step():
         if st.button("Continue to Projects →", type="primary", use_container_width=True):
             navigate_to_step('projects')
 
+def show_current_support_summary(dept):
+    """Show current support package selection with options to modify"""
+    st.markdown("### 📋 Current Support Selection")
+    
+    current_package = st.session_state.support_packages[dept]
+    if current_package:
+        package_details = st.session_state.admin_support_packages[current_package]
+        extras = st.session_state.support_extras[dept]
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            st.markdown(f"""
+            **Selected Package:** {current_package}  
+            **Base Cost:** SAR {package_details['price']:,.0f}  
+            **Includes:** {package_details['support_requests']} support requests, {package_details['training']} training sessions, {package_details['reports']} reports, {package_details['improvement_hours']}h improvement
+            """)
+            
+            # Show extras if any
+            extra_items = []
+            if extras['support'] > 0:
+                extra_items.append(f"{extras['support']} extra support requests")
+            if extras['training'] > 0:
+                extra_items.append(f"{extras['training']} extra training sessions")
+            if extras['reports'] > 0:
+                extra_items.append(f"{extras['reports']} extra reports")
+            
+            if extra_items:
+                st.markdown(f"**Additional Services:** {', '.join(extra_items)}")
+        
+        with col2:
+            total_cost = calculate_support_total(dept)
+            st.markdown(f"**Total Cost:**  \nSAR {total_cost:,.0f}")
+    
+    st.markdown("---")
+
 def show_projects_step():
-    """Step 7: Projects (Simplified)"""
+    """Step 7: Enhanced Implementation Projects with Comprehensive Editing"""
     if not st.session_state.selected_department:
         navigate_to_step('department_selection')
         return
@@ -1674,31 +2752,85 @@ def show_projects_step():
     
     st.markdown(f"## 🚀 {dept_config['title']} - Implementation Projects")
     
-    # Simple project addition
-    with st.form("add_project"):
-        project_name = st.text_input("Project Name")
-        project_budget = st.number_input("Budget (SAR)", min_value=0, value=100000)
-        
-        if st.form_submit_button("Add Project"):
-            if project_name:
-                project = {
-                    'name': project_name,
-                    'budget': project_budget,
-                    'description': f"Implementation project for {dept_config['title']}"
-                }
-                st.session_state.implementation_projects[dept].append(project)
-                st.success(f"Added project: {project_name}")
+    # Check if user has existing projects
+    existing_projects = st.session_state.implementation_projects[dept]
+    has_existing_projects = len(existing_projects) > 0
     
-    # Show current projects
-    if st.session_state.implementation_projects[dept]:
-        st.markdown("### Current Projects")
-        for i, project in enumerate(st.session_state.implementation_projects[dept]):
-            col1, col2 = st.columns([3, 1])
+    if has_existing_projects:
+        st.markdown(f"""
+        <div class='success-message'>
+            ✅ You have {len(existing_projects)} implementation project(s). You can edit, add more, or remove projects below.
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Show current projects with edit/remove options
+        show_current_projects_summary(dept)
+    else:
+        st.markdown("Define custom implementation projects and initiatives.")
+    
+    # Enhanced project addition form
+    with st.expander("➕ Add New Implementation Project", expanded=not has_existing_projects):
+        with st.form(f"new_project_{dept}"):
+            col1, col2 = st.columns(2)
+            
             with col1:
-                st.markdown(f"**{project['name']}** - SAR {project['budget']:,.0f}")
+                project_name = st.text_input("Project Name", placeholder="Enter project name")
+                project_description = st.text_area("Project Description", placeholder="Detailed project description")
+                
+                # Category selection based on department
+                categories = st.session_state.admin_project_categories[dept]
+                selected_category = st.selectbox("Project Category", options=list(categories.keys()))
+                project_type = st.selectbox("Specific Project Type", options=categories[selected_category])
+                
+                timeline = st.selectbox("Timeline", ["Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025", "Multi-quarter"])
+            
             with col2:
-                if st.button("Remove", key=f"remove_proj_{i}"):
-                    st.session_state.implementation_projects[dept].pop(i)
+                budget = st.number_input("Budget (SAR)", min_value=0, value=100000, step=10000)
+                priority = st.select_slider("Priority", ["Low", "Medium", "High", "Critical"], value="Medium")
+                success_criteria = st.text_area("Success Criteria", placeholder="Define success metrics")
+                
+                # Special RPA handling for IT department
+                if dept == "IT" and "RPA" in project_type:
+                    st.markdown("#### 🤖 RPA Package Selection")
+                    use_rpa_package = st.checkbox("Use Predefined RPA Package")
+                    
+                    if use_rpa_package:
+                        rpa_package = st.selectbox("RPA Package", list(st.session_state.admin_rpa_packages.keys()))
+                        if rpa_package:
+                            package_details = st.session_state.admin_rpa_packages[rpa_package]
+                            st.info(f"Year 1: SAR {package_details['year_1_total']:,} | {package_details['processes_covered']}")
+                            budget = package_details['year_1_total']
+            
+            col_submit1, col_submit2 = st.columns(2)
+            with col_submit1:
+                if st.form_submit_button("Add Project", type="primary", use_container_width=True):
+                    if project_name and project_description and budget > 0:
+                        project = {
+                            'name': project_name,
+                            'description': project_description,
+                            'category': selected_category,
+                            'type': project_type,
+                            'timeline': timeline,
+                            'budget': budget,
+                            'priority': priority,
+                            'success_criteria': success_criteria,
+                            'created_date': datetime.now().strftime("%Y-%m-%d"),
+                            'id': str(uuid.uuid4())[:8]  # Add unique ID for editing
+                        }
+                        
+                        # Add RPA details if applicable
+                        if dept == "IT" and "RPA" in project_type and locals().get('use_rpa_package', False):
+                            project['rpa_package'] = rpa_package
+                            project['rpa_details'] = st.session_state.admin_rpa_packages[rpa_package]
+                        
+                        st.session_state.implementation_projects[dept].append(project)
+                        st.success(f"✅ Added project: {project_name}")
+                        st.rerun()
+                    else:
+                        st.error("Please fill in all required fields.")
+            
+            with col_submit2:
+                if st.form_submit_button("Clear Form", use_container_width=True):
                     st.rerun()
     
     # Navigation
@@ -1707,8 +2839,160 @@ def show_projects_step():
         if st.button("← Back to Support", use_container_width=True):
             navigate_to_step('support')
     with col2:
-        if st.button("Continue to Final Terms →", type="primary", use_container_width=True):
-            navigate_to_step('terms_submission')
+        # Check if high-value service terms are needed
+        total_budget = calculate_operational_total(dept) + calculate_support_total(dept) + calculate_project_total(dept)
+        if total_budget > 100000:
+            if st.button("Continue to High-Value Terms →", type="primary", use_container_width=True):
+                navigate_to_step('terms_submission')
+        else:
+            if st.button("Continue to Final Terms →", type="primary", use_container_width=True):
+                navigate_to_step('terms_submission')
+
+def show_current_projects_summary(dept):
+    """Show current implementation projects with comprehensive editing options"""
+    st.markdown(f"### 📋 Your {SHARED_SERVICE_DEPARTMENTS[dept]['title']} Implementation Projects")
+    
+    existing_projects = st.session_state.implementation_projects[dept]
+    total_budget = sum(project['budget'] for project in existing_projects)
+    
+    # Project summary header
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Projects", len(existing_projects))
+    with col2:
+        st.metric("Total Budget", f"SAR {total_budget:,.0f}")
+    with col3:
+        avg_budget = total_budget / len(existing_projects) if existing_projects else 0
+        st.metric("Average Budget", f"SAR {avg_budget:,.0f}")
+    
+    # Individual project cards with edit options
+    for i, project in enumerate(existing_projects):
+        priority_colors = {
+            'Low': '#10b981',
+            'Medium': '#f59e0b',
+            'High': '#ef4444',
+            'Critical': '#dc2626'
+        }
+        
+        priority_color = priority_colors.get(project['priority'], '#6b7280')
+        
+        with st.expander(f"✏️ Edit: {project['name']} - SAR {project['budget']:,.0f} ({project['priority']} Priority)"):
+            # Edit form for this project
+            with st.form(f"edit_project_{i}"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    new_name = st.text_input("Project Name", value=project['name'], key=f"edit_name_{i}")
+                    new_description = st.text_area("Description", value=project['description'], key=f"edit_desc_{i}")
+                    new_timeline = st.selectbox("Timeline", 
+                                               ["Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025", "Multi-quarter"],
+                                               index=["Q1 2025", "Q2 2025", "Q3 2025", "Q4 2025", "Multi-quarter"].index(project['timeline']),
+                                               key=f"edit_timeline_{i}")
+                
+                with col2:
+                    new_budget = st.number_input("Budget (SAR)", 
+                                               min_value=0, 
+                                               value=project['budget'],
+                                               step=10000,
+                                               key=f"edit_budget_{i}")
+                    new_priority = st.select_slider("Priority", 
+                                                   ["Low", "Medium", "High", "Critical"],
+                                                   value=project['priority'],
+                                                   key=f"edit_priority_{i}")
+                    new_success_criteria = st.text_area("Success Criteria", 
+                                                       value=project.get('success_criteria', ''),
+                                                       key=f"edit_success_{i}")
+                
+                # Form buttons
+                col_update, col_remove, col_duplicate = st.columns(3)
+                
+                with col_update:
+                    if st.form_submit_button("💾 Update Project", type="primary", use_container_width=True):
+                        # Update the project
+                        st.session_state.implementation_projects[dept][i].update({
+                            'name': new_name,
+                            'description': new_description,
+                            'timeline': new_timeline,
+                            'budget': new_budget,
+                            'priority': new_priority,
+                            'success_criteria': new_success_criteria,
+                            'last_modified': datetime.now().strftime("%Y-%m-%d %H:%M")
+                        })
+                        st.success(f"✅ Updated project: {new_name}")
+                        st.rerun()
+                
+                with col_remove:
+                    if st.form_submit_button("🗑️ Remove Project", use_container_width=True):
+                        project_name = project['name']
+                        st.session_state.implementation_projects[dept].pop(i)
+                        st.success(f"🗑️ Removed project: {project_name}")
+                        st.rerun()
+                
+                with col_duplicate:
+                    if st.form_submit_button("📋 Duplicate", use_container_width=True):
+                        # Create a duplicate with modified name
+                        duplicate_project = project.copy()
+                        duplicate_project['name'] = f"{project['name']} (Copy)"
+                        duplicate_project['id'] = str(uuid.uuid4())[:8]
+                        duplicate_project['created_date'] = datetime.now().strftime("%Y-%m-%d")
+                        
+                        st.session_state.implementation_projects[dept].append(duplicate_project)
+                        st.success(f"📋 Duplicated project: {duplicate_project['name']}")
+                        st.rerun()
+            
+            # Project details display (read-only info)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown(f"**Category:** {project.get('category', 'General')}")
+                st.markdown(f"**Type:** {project.get('type', 'General')}")
+            with col2:
+                st.markdown(f"**Created:** {project.get('created_date', 'Unknown')}")
+                if 'last_modified' in project:
+                    st.markdown(f"**Modified:** {project['last_modified']}")
+            with col3:
+                if project.get('rpa_package'):
+                    st.markdown(f"**RPA Package:** {project['rpa_package']}")
+                st.markdown(f"**Project ID:** {project.get('id', 'N/A')}")
+    
+    # Bulk actions
+    if len(existing_projects) > 1:
+        st.markdown("---")
+        st.markdown("### 🔧 Bulk Actions")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if st.button("📊 Sort by Budget", use_container_width=True):
+                st.session_state.implementation_projects[dept].sort(key=lambda x: x['budget'], reverse=True)
+                st.success("Projects sorted by budget (highest first)")
+                st.rerun()
+        
+        with col2:
+            if st.button("⚡ Sort by Priority", use_container_width=True):
+                priority_order = {'Critical': 4, 'High': 3, 'Medium': 2, 'Low': 1}
+                st.session_state.implementation_projects[dept].sort(key=lambda x: priority_order.get(x['priority'], 0), reverse=True)
+                st.success("Projects sorted by priority")
+                st.rerun()
+        
+        with col3:
+            if st.button("📅 Sort by Timeline", use_container_width=True):
+                timeline_order = {'Q1 2025': 1, 'Q2 2025': 2, 'Q3 2025': 3, 'Q4 2025': 4, 'Multi-quarter': 5}
+                st.session_state.implementation_projects[dept].sort(key=lambda x: timeline_order.get(x['timeline'], 6))
+                st.success("Projects sorted by timeline")
+                st.rerun()
+        
+        with col4:
+            if st.button("🗑️ Clear All Projects", use_container_width=True, type="secondary"):
+                if st.session_state.get(f'confirm_clear_{dept}', False):
+                    st.session_state.implementation_projects[dept] = []
+                    st.session_state[f'confirm_clear_{dept}'] = False
+                    st.success("All projects cleared")
+                    st.rerun()
+                else:
+                    st.session_state[f'confirm_clear_{dept}'] = True
+                    st.warning("Click again to confirm clearing all projects")
+    
+    st.markdown("---")
 
 def show_terms_submission_step():
     """Step 8: Final Terms"""
